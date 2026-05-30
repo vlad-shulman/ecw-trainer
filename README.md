@@ -1,5 +1,5 @@
 > [!WARNING]
-> 🚧 **Work in Progress** — This is a proof-of-concept. Not production ready.
+> This is a proof-of-concept (work in progress). Not production ready.
 
 # ECW On-Demand Trainer
 
