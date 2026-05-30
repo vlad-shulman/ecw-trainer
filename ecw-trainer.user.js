@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
-// @namespace    https://github.com/vlad-shulman/ecw-trainer
+// @namespace    https://github.com/YOUR_GITHUB_USERNAME/ecw-trainer
 // @version      0.1.0
 // @description  On-demand training overlay for eClinicalWorks
-// @author       Vlad
-// @match        *://*/*
+// @author       YOUR_NAME
+// @match        *://flcahatrnapp.ecwcloud.com/*
 // @grant        GM_addStyle
-// @updateURL    https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
-// @downloadURL  https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
+// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/ecw-trainer/main/ecw-trainer.user.js
+// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/ecw-trainer/main/ecw-trainer.user.js
 // ==/UserScript==
 
 (function () {
