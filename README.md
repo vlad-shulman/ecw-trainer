@@ -1,3 +1,5 @@
+> 🚧 **Work in Progress** — This is a proof-of-concept. Not production ready.
+
 # ECW On-Demand Trainer
 
 A Tampermonkey userscript that overlays AI-powered training hotspots on eClinicalWorks (ECW) to guide providers through EMR workflows in real time.
