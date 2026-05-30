@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.1.3
+// @version      0.1.4
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -13,52 +13,63 @@
 (function () {
     'use strict';
 
+    let isActive = true;
+
     // --- Styles ---
     GM_addStyle(`
-        #ecw-trainer-banner {
+        #ecw-trainer-toggle {
             position: fixed;
-            bottom: 24px;
-            right: 24px;
+            bottom: 20px;
+            right: 20px;
             z-index: 999999;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            opacity: 0.75;
+            transition: opacity 0.2s, background 0.2s;
+            pointer-events: auto;
+            white-space: nowrap;
+        }
+
+        #ecw-trainer-toggle:hover {
+            opacity: 1;
+        }
+
+        #ecw-trainer-toggle.on {
             background: #1a56db;
             color: #ffffff;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-            padding: 12px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            pointer-events: auto;
         }
 
-        #ecw-trainer-banner button {
-            background: transparent;
-            border: 1px solid rgba(255,255,255,0.6);
-            color: #ffffff;
-            font-size: 12px;
-            padding: 4px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        #ecw-trainer-banner button:hover {
-            background: rgba(255,255,255,0.15);
+        #ecw-trainer-toggle.off {
+            background: #6b7280;
+            color: #e5e7eb;
         }
     `);
 
-    // --- UI ---
-    const banner = document.createElement('div');
-    banner.id = 'ecw-trainer-banner';
-    banner.innerHTML = `
-        <span>✅ ECW Trainer loaded — Hello World!</span>
-        <button id="ecw-trainer-dismiss">Dismiss</button>
-    `;
-    document.body.appendChild(banner);
+    // --- Toggle button ---
+    const btn = document.createElement('button');
+    btn.id = 'ecw-trainer-toggle';
 
-    document.getElementById('ecw-trainer-dismiss').addEventListener('click', () => {
-        banner.remove();
+    function updateButton() {
+        if (isActive) {
+            btn.textContent = '🟢 ECW Trainer — ON';
+            btn.className = 'on';
+        } else {
+            btn.textContent = '⚫ ECW Trainer — OFF';
+            btn.className = 'off';
+        }
+    }
+
+    btn.addEventListener('click', () => {
+        isActive = !isActive;
+        updateButton();
     });
+
+    updateButton();
+    document.body.appendChild(btn);
 
 })();
