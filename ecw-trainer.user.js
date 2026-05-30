@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/YOUR_GITHUB_USERNAME/ecw-trainer
-// @version      0.1.0
+// @version      0.1.1
 // @description  On-demand training overlay for eClinicalWorks
 // @author       YOUR_NAME
 // @match        *://flcahatrnapp.ecwcloud.com/*
