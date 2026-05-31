@@ -65,3 +65,19 @@ Each workflow MD file contains:
 - **Tampermonkey** — userscript host, injects the trainer into ECW
 - **Claude API** — analyzes screenshots, identifies workflow position, calculates hotspot coordinates
 - **GitHub** — hosts the userscript and workflow reference files
+
+---
+
+## Future UX Vision: The Minimap HUD
+
+Inspired by RPG minimap mechanics (think WoW quest markers), the long-term UX vision has two states:
+
+**State 1 — Navigation Mode** (target element is off-screen)
+A sticky arrow hugs the edge of the viewport pointing in the direction the provider needs to scroll. Similar to a quest marker arrow guiding you toward a destination.
+
+**State 2 — Hotspot Mode** (target element is in viewport)
+The pulsing ring appears directly on the target element. Similar to a quest marker becoming a full hotspot when you arrive at the destination.
+
+The transition between states is triggered automatically based on whether the target element is currently visible in the provider's viewport. This solves the scroll problem elegantly — providers instinctively understand "follow the arrow, then click the hotspot."
+
+> 🚧 This is a future vision item — not part of the current POC.
