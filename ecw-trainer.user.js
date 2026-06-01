@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.1.8
+// @version      0.1.9
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -10,10 +10,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        unsafeWindow
 // @connect      raw.githubusercontent.com
 // @connect      api.anthropic.com
-// @connect      cdnjs.cloudflare.com
 // @updateURL    https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // @downloadURL  https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // ==/UserScript==
@@ -21,9 +19,8 @@
 (function () {
     'use strict';
 
-    const GITHUB_RAW       = 'https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main';
-    const WORKFLOW_ID      = 'merge-awv-template';
-    const SCREENSHOT_SCALE = 0.75; // reduces image size sent to Claude
+    const GITHUB_RAW  = 'https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main';
+    const WORKFLOW_ID = 'merge-awv-template';
 
     let isActive  = false;
     let menuEl    = null;
@@ -42,41 +39,70 @@
         return key || null;
     }
 
-    // ── html2canvas: load on demand ───────────────────────────────────────────
-    // NOT loaded at startup — only fetched the first time a workflow fires.
-    // This prevents the library from patching browser APIs during ECW's init.
-    let _h2cPromise = null;
+    // ── DOM capture ───────────────────────────────────────────────────────────
+    // Walks the document and all accessible same-origin iframes, collecting
+    // every visible element with its text and getBoundingClientRect coordinates.
+    // No screenshot, no external library — bypasses CSP entirely.
+    function capturePageContext() {
+        const seen = new Map(); // normalized text → smallest-area element entry
 
-    function loadHtml2Canvas() {
-        if (_h2cPromise) return _h2cPromise;
-        _h2cPromise = new Promise((resolve, reject) => {
-            if (typeof unsafeWindow.html2canvas === 'function') {
-                resolve(unsafeWindow.html2canvas);
-                return;
-            }
-            // Inject a script tag into the page — loads html2canvas into the
-            // page context, then accessible via unsafeWindow.html2canvas.
-            const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-            script.onload  = () => resolve(unsafeWindow.html2canvas);
-            script.onerror = () => reject(new Error('Failed to load html2canvas'));
-            (document.head || document.documentElement).appendChild(script);
-        });
-        return _h2cPromise;
-    }
+        function harvest(doc, dx, dy) {
+            doc.querySelectorAll(
+                'a, button, input, select, textarea, li, td, th, span, label, ' +
+                '[role="tab"], [role="button"], [role="menuitem"], [role="option"]'
+            ).forEach(el => {
+                const raw = (el.textContent || el.value || el.placeholder || '')
+                    .trim().replace(/\s+/g, ' ');
+                if (!raw || raw.length < 2 || raw.length > 80) return;
 
-    // ── Screenshot ────────────────────────────────────────────────────────────
-    async function captureScreenshot() {
-        const h2c    = await loadHtml2Canvas();
-        const canvas = await h2c(document.documentElement, {
-            useCORS:      true,
-            allowTaint:   true,
-            scale:        SCREENSHOT_SCALE,
-            logging:      false,
-            windowWidth:  window.innerWidth,
-            windowHeight: window.innerHeight,
+                const r = el.getBoundingClientRect();
+                if (r.width < 8 || r.height < 8)              return;
+                if (r.top  < 0 || r.bottom > window.innerHeight) return;
+                if (r.left < 0 || r.right  > window.innerWidth)  return;
+
+                const area = r.width * r.height;
+                const key  = raw.toLowerCase();
+                if (!seen.has(key) || seen.get(key).area > area) {
+                    seen.set(key, {
+                        tag:  el.tagName.toLowerCase(),
+                        text: raw,
+                        role: el.getAttribute('role') || undefined,
+                        rect: {
+                            x: Math.round(r.left + dx),
+                            y: Math.round(r.top  + dy),
+                            w: Math.round(r.width),
+                            h: Math.round(r.height),
+                        },
+                        area,
+                    });
+                }
+            });
+
+            // Recurse into same-origin iframes with adjusted coordinate offsets
+            doc.querySelectorAll('iframe').forEach(iframe => {
+                try {
+                    const iDoc = iframe.contentDocument;
+                    const ir   = iframe.getBoundingClientRect();
+                    if (iDoc && ir.width > 0) {
+                        harvest(iDoc, Math.round(ir.left + dx), Math.round(ir.top + dy));
+                    }
+                } catch (_) { /* cross-origin — skip */ }
+            });
+        }
+
+        harvest(document, 0, 0);
+
+        const elements = [...seen.values()]
+            .sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x)
+            .slice(0, 300)
+            .map(({ area, ...el }) => el); // strip internal area field
+
+        const iframes = [...document.querySelectorAll('iframe')].map(f => {
+            const r = f.getBoundingClientRect();
+            return { src: f.src || '(inline)', w: Math.round(r.width), h: Math.round(r.height) };
         });
-        return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+
+        return { viewport: { w: window.innerWidth, h: window.innerHeight }, iframes, elements };
     }
 
     // ── GitHub asset fetchers ─────────────────────────────────────────────────
@@ -109,41 +135,55 @@
     }
 
     // ── Claude API ────────────────────────────────────────────────────────────
-    function callClaude(apiKey, screenshotB64, workflowMd, refImageB64) {
-        const systemPrompt = `You are a UI analysis assistant embedded in a healthcare training tool.
-Your job is to locate specific UI elements in screenshots of eClinicalWorks (ECW) and return their exact pixel coordinates.
-Always respond with valid JSON only — no markdown fences, no explanation outside the JSON.`;
+    // Sends DOM snapshot (text) + reference PNG (image) to Claude.
+    // Coordinates in the snapshot come directly from getBoundingClientRect —
+    // no scaling needed; Claude returns them as-is for overlay positioning.
+    function callClaude(apiKey, domSnapshot, workflowMd, refImageB64) {
+        const systemPrompt =
+            `You are a UI analysis assistant embedded in a healthcare training tool. ` +
+            `You receive a structured DOM snapshot — a list of visible UI elements with ` +
+            `their text and screen coordinates — captured from eClinicalWorks (ECW). ` +
+            `Locate the requested element and return its exact coordinates from the snapshot. ` +
+            `Always respond with valid JSON only — no markdown fences, no explanation outside the JSON.`;
 
-        const userPrompt = `## Task
-Locate the target element for Step 1 of the workflow described below and return its pixel coordinates in the live screenshot.
+        const elementsJson = JSON.stringify(domSnapshot.elements);
+
+        const userPrompt =
+`## Task
+Find the target element for Step 1 in the DOM snapshot below and return its screen coordinates.
 
 ## Workflow reference
 ${workflowMd}
 
-## Instructions
-1. The first image is a reference screenshot showing what Step 1 looks like.
-2. The second image is the provider's live ECW screen taken just now.
+## Live DOM snapshot
+Viewport: ${domSnapshot.viewport.w} × ${domSnapshot.viewport.h} px
+Iframes on page: ${domSnapshot.iframes.length} (${domSnapshot.iframes.map(f => f.src).join(', ') || 'none'})
+Elements captured: ${domSnapshot.elements.length}
 
-Find the **Templates** tab in the horizontal tab row in the upper-right chart panel of the live screenshot.
+Element list — each entry has: tag, text, role (optional), rect {x, y, w, h} in screen pixels:
+${elementsJson}
+
+## Instructions
+Find the element whose text is "Templates" and that sits in a horizontal tab row alongside elements like "Overview", "Enc", "DRTLA", "History", "CDSS", "OS" in the right chart panel.
 
 Return ONLY this JSON (no markdown fences):
 {
   "found": true,
-  "reasoning": "<2-4 sentences in plain English: describe what you see in the live screenshot, how you identified the right chart panel, and how you located the Templates tab>",
-  "target_description": "<one sentence describing the element you found and its visual position on screen>",
+  "reasoning": "<2-4 sentences: describe what elements you see, how you identified the tab row, and which entry matched 'Templates'>",
+  "target_description": "<one sentence describing the matched element and its position>",
   "hotspot": {
-    "x": <integer — left edge of the Templates tab, pixels from left of screenshot>,
-    "y": <integer — top edge of the Templates tab, pixels from top of screenshot>,
-    "width": <integer — width of the tab in pixels>,
-    "height": <integer — height of the tab in pixels>
+    "x": <rect.x from matched element>,
+    "y": <rect.y from matched element>,
+    "width": <rect.w from matched element>,
+    "height": <rect.h from matched element>
   },
   "instruction": "Click the **Templates** tab in the right chart panel to show favorite templates."
 }
 
-If the Templates tab is not visible, return:
+If no "Templates" tab is found in a tab-row context, return:
 {
   "found": false,
-  "reasoning": "<what you see instead and why the tab is not visible>",
+  "reasoning": "<what you see instead and why Templates was not found>",
   "reason": "<one sentence summary>"
 }`;
 
@@ -169,11 +209,7 @@ If the Templates tab is not visible, return:
                             },
                             {
                                 type: 'text',
-                                text: 'Above: reference screenshot of Step 1. Below: live provider screen.',
-                            },
-                            {
-                                type:   'image',
-                                source: { type: 'base64', media_type: 'image/jpeg', data: screenshotB64 },
+                                text: 'Above: reference screenshot showing what the ECW interface looks like for Step 1.',
                             },
                             { type: 'text', text: userPrompt },
                         ],
@@ -309,17 +345,13 @@ If the Templates tab is not visible, return:
             letter-spacing: 0.05em;
             border-bottom:  1px solid #e5e7eb;
         }
-        .ecw-menu-item {
-            padding: 10px 16px;
-            cursor:  pointer;
-            color:   #111827;
-        }
-        .ecw-menu-item:hover                { background: #eff6ff; color: #1a56db; }
-        .ecw-menu-divider                   { border-top: 1px solid #e5e7eb; }
-        .ecw-menu-item.ecw-muted            { color: #6b7280; }
-        .ecw-menu-item.ecw-muted:hover      { background: #f9fafb; color: #374151; }
-        .ecw-menu-item.ecw-debug-on         { color: #d97706; }
-        .ecw-menu-item.ecw-debug-on:hover   { background: #fffbeb; color: #b45309; }
+        .ecw-menu-item              { padding: 10px 16px; cursor: pointer; color: #111827; }
+        .ecw-menu-item:hover        { background: #eff6ff; color: #1a56db; }
+        .ecw-menu-divider           { border-top: 1px solid #e5e7eb; }
+        .ecw-menu-item.ecw-muted    { color: #6b7280; }
+        .ecw-menu-item.ecw-muted:hover     { background: #f9fafb; color: #374151; }
+        .ecw-menu-item.ecw-debug-on        { color: #d97706; }
+        .ecw-menu-item.ecw-debug-on:hover  { background: #fffbeb; color: #b45309; }
 
         /* ── Status bar ── */
         #ecw-status {
@@ -356,9 +388,7 @@ If the Templates tab is not visible, return:
             transform:       translateX(100%);
             transition:      transform 0.3s ease;
         }
-        #ecw-debug-panel.open {
-            transform: translateX(0);
-        }
+        #ecw-debug-panel.open { transform: translateX(0); }
 
         #ecw-debug-header {
             display:         flex;
@@ -370,94 +400,66 @@ If the Templates tab is not visible, return:
             flex-shrink:     0;
         }
         #ecw-debug-header span {
-            font-weight:    bold;
-            font-size:      14px;
-            letter-spacing: 0.02em;
-            color:          #93c5fd;
+            font-weight: bold; font-size: 14px; letter-spacing: 0.02em; color: #93c5fd;
         }
         #ecw-debug-close {
-            background:    transparent;
-            border:        1px solid rgba(255,255,255,0.25);
-            color:         #94a3b8;
-            font-size:     13px;
-            padding:       3px 10px;
-            border-radius: 4px;
-            cursor:        pointer;
+            background: transparent; border: 1px solid rgba(255,255,255,0.25);
+            color: #94a3b8; font-size: 13px; padding: 3px 10px;
+            border-radius: 4px; cursor: pointer;
         }
         #ecw-debug-close:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 
-        #ecw-debug-body {
-            flex:       1;
-            overflow-y: auto;
-            padding:    0 0 24px;
-        }
+        #ecw-debug-body { flex: 1; overflow-y: auto; padding: 0 0 24px; }
 
-        .ecw-debug-section {
-            border-bottom: 1px solid rgba(255,255,255,0.07);
-        }
+        .ecw-debug-section        { border-bottom: 1px solid rgba(255,255,255,0.07); }
         .ecw-debug-section-header {
-            display:         flex;
-            align-items:     center;
-            justify-content: space-between;
-            padding:         12px 16px 10px;
-            font-size:       11px;
-            font-weight:     bold;
-            text-transform:  uppercase;
-            letter-spacing:  0.08em;
-            color:           #60a5fa;
-            cursor:          pointer;
-            user-select:     none;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 16px 10px; font-size: 11px; font-weight: bold;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            color: #60a5fa; cursor: pointer; user-select: none;
         }
         .ecw-debug-section-header:hover { color: #93c5fd; }
-        .ecw-debug-chevron { font-size: 10px; opacity: 0.7; }
-        .ecw-debug-section-body {
-            padding: 0 16px 16px;
-        }
+        .ecw-debug-chevron  { font-size: 10px; opacity: 0.7; }
+        .ecw-debug-section-body { padding: 0 16px 16px; }
 
-        .ecw-debug-screenshot img {
-            width:         100%;
-            border-radius: 4px;
-            border:        1px solid rgba(255,255,255,0.1);
-            display:       block;
-        }
+        .ecw-debug-reasoning { line-height: 1.6; color: #cbd5e1; }
 
-        .ecw-debug-reasoning {
-            line-height: 1.6;
-            color:       #cbd5e1;
+        .ecw-debug-field        { margin-bottom: 10px; }
+        .ecw-debug-label        {
+            font-size: 10px; font-weight: bold; text-transform: uppercase;
+            letter-spacing: 0.06em; color: #64748b; margin-bottom: 3px;
         }
-
-        .ecw-debug-field {
-            margin-bottom: 10px;
+        .ecw-debug-value        {
+            color: #e2e8f0; background: rgba(255,255,255,0.05);
+            border-radius: 4px; padding: 6px 10px; line-height: 1.5; word-break: break-word;
         }
-        .ecw-debug-label {
-            font-size:     10px;
-            font-weight:   bold;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color:          #64748b;
-            margin-bottom:  3px;
-        }
-        .ecw-debug-value {
-            color:          #e2e8f0;
-            background:     rgba(255,255,255,0.05);
-            border-radius:  4px;
-            padding:        6px 10px;
-            line-height:    1.5;
-            word-break:     break-word;
-        }
-        .ecw-debug-coords {
-            display:               grid;
-            grid-template-columns: 1fr 1fr;
-            gap:                   6px;
-        }
-        .ecw-debug-coord-item {
-            background:    rgba(255,255,255,0.05);
-            border-radius: 4px;
-            padding:       6px 10px;
-            text-align:    center;
+        .ecw-debug-coords       { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .ecw-debug-coord-item   {
+            background: rgba(255,255,255,0.05); border-radius: 4px;
+            padding: 6px 10px; text-align: center;
         }
         .ecw-debug-coord-item .coord-label { font-size: 10px; color: #64748b; }
         .ecw-debug-coord-item .coord-val   { font-size: 15px; font-weight: bold; color: #60a5fa; }
+
+        .ecw-debug-stat-row {
+            display: flex; justify-content: space-between;
+            padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 12px;
+        }
+        .ecw-debug-stat-row:last-child { border-bottom: none; }
+        .ecw-debug-stat-label { color: #64748b; }
+        .ecw-debug-stat-val   { color: #93c5fd; font-weight: bold; }
+
+        .ecw-debug-el-table {
+            width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px;
+        }
+        .ecw-debug-el-table th {
+            text-align: left; color: #64748b; font-weight: bold; padding: 3px 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .ecw-debug-el-table td { padding: 3px 4px; color: #cbd5e1; vertical-align: top; }
+        .ecw-debug-el-table tr:hover td { background: rgba(255,255,255,0.04); }
+        .ecw-debug-el-text { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     `);
 
     // ── Overlay helpers ───────────────────────────────────────────────────────
@@ -475,16 +477,17 @@ If the Templates tab is not visible, return:
     function drawOverlay(result) {
         clearOverlay();
 
-        const upscale              = 1 / SCREENSHOT_SCALE;
+        // Coordinates come directly from getBoundingClientRect via capturePageContext —
+        // they are already in CSS screen pixels, no scaling required.
         const { x, y, width, height } = result.hotspot;
 
         const ring = document.createElement('div');
         ring.id = 'ecw-hotspot-ring';
         Object.assign(ring.style, {
-            left:   Math.round(x      * upscale) + 'px',
-            top:    Math.round(y      * upscale) + 'px',
-            width:  Math.round(width  * upscale) + 'px',
-            height: Math.round(height * upscale) + 'px',
+            left:   x      + 'px',
+            top:    y      + 'px',
+            width:  width  + 'px',
+            height: height + 'px',
         });
         document.body.appendChild(ring);
 
@@ -512,24 +515,31 @@ If the Templates tab is not visible, return:
     function showStatus(msg, autoClearMs = 0) {
         document.getElementById('ecw-status')?.remove();
         const el = document.createElement('div');
-        el.id          = 'ecw-status';
-        el.textContent = msg;
+        el.id = 'ecw-status'; el.textContent = msg;
         document.body.appendChild(el);
         if (autoClearMs) setTimeout(() => el.remove(), autoClearMs);
         return el;
     }
 
     // ── Debug panel ───────────────────────────────────────────────────────────
-    function showDebugPanel(screenshotB64, result) {
+    function showDebugPanel(domSnapshot, result) {
         document.getElementById('ecw-debug-panel')?.remove();
 
-        const upscale              = 1 / SCREENSHOT_SCALE;
         const { x, y, width, height } = result.found ? result.hotspot : {};
 
-        const screenX = result.found ? Math.round(x      * upscale) : '—';
-        const screenY = result.found ? Math.round(y      * upscale) : '—';
-        const screenW = result.found ? Math.round(width  * upscale) : '—';
-        const screenH = result.found ? Math.round(height * upscale) : '—';
+        // Show first 30 captured elements in a table for inspection
+        const elRows = (domSnapshot.elements || []).slice(0, 30).map(el =>
+            `<tr>
+                <td class="ecw-debug-el-text" title="${el.text.replace(/"/g,'&quot;')}">${el.text}</td>
+                <td>${el.tag}</td>
+                <td>${el.rect.x},${el.rect.y}</td>
+                <td>${el.rect.w}×${el.rect.h}</td>
+            </tr>`
+        ).join('');
+
+        const iframeList = domSnapshot.iframes.length
+            ? domSnapshot.iframes.map(f => `<div style="color:#94a3b8;font-size:11px;margin-bottom:3px">${f.src} (${f.w}×${f.h})</div>`).join('')
+            : '<span style="color:#64748b">None detected</span>';
 
         const panel = document.createElement('div');
         panel.id = 'ecw-debug-panel';
@@ -541,12 +551,29 @@ If the Templates tab is not visible, return:
             <div id="ecw-debug-body">
 
                 <div class="ecw-debug-section">
-                    <div class="ecw-debug-section-header" data-target="ecw-dbg-screenshot">
-                        <span>Screenshot</span>
+                    <div class="ecw-debug-section-header" data-target="ecw-dbg-context">
+                        <span>Page Context</span>
                         <span class="ecw-debug-chevron">▼</span>
                     </div>
-                    <div class="ecw-debug-section-body ecw-debug-screenshot" id="ecw-dbg-screenshot">
-                        <img src="data:image/jpeg;base64,${screenshotB64}" alt="Captured screenshot" />
+                    <div class="ecw-debug-section-body" id="ecw-dbg-context">
+                        <div class="ecw-debug-stat-row">
+                            <span class="ecw-debug-stat-label">Viewport</span>
+                            <span class="ecw-debug-stat-val">${domSnapshot.viewport.w} × ${domSnapshot.viewport.h} px</span>
+                        </div>
+                        <div class="ecw-debug-stat-row">
+                            <span class="ecw-debug-stat-label">Elements captured</span>
+                            <span class="ecw-debug-stat-val">${domSnapshot.elements.length}</span>
+                        </div>
+                        <div class="ecw-debug-stat-row">
+                            <span class="ecw-debug-stat-label">Iframes on page</span>
+                            <span class="ecw-debug-stat-val">${domSnapshot.iframes.length}</span>
+                        </div>
+                        <div style="margin-top:10px;margin-bottom:6px;">${iframeList}</div>
+                        <table class="ecw-debug-el-table">
+                            <thead><tr><th>Text</th><th>Tag</th><th>X,Y</th><th>Size</th></tr></thead>
+                            <tbody>${elRows}</tbody>
+                        </table>
+                        ${domSnapshot.elements.length > 30 ? `<div style="color:#64748b;font-size:11px;margin-top:6px;">…and ${domSnapshot.elements.length - 30} more</div>` : ''}
                     </div>
                 </div>
 
@@ -576,12 +603,12 @@ If the Templates tab is not visible, return:
                             <div class="ecw-debug-value">${result.target_description || '—'}</div>
                         </div>
                         <div class="ecw-debug-field">
-                            <div class="ecw-debug-label">Hotspot Coordinates (screen pixels)</div>
+                            <div class="ecw-debug-label">Hotspot Coordinates (screen px)</div>
                             <div class="ecw-debug-coords">
-                                <div class="ecw-debug-coord-item"><div class="coord-label">X</div><div class="coord-val">${screenX}</div></div>
-                                <div class="ecw-debug-coord-item"><div class="coord-label">Y</div><div class="coord-val">${screenY}</div></div>
-                                <div class="ecw-debug-coord-item"><div class="coord-label">Width</div><div class="coord-val">${screenW}</div></div>
-                                <div class="ecw-debug-coord-item"><div class="coord-label">Height</div><div class="coord-val">${screenH}</div></div>
+                                <div class="ecw-debug-coord-item"><div class="coord-label">X</div><div class="coord-val">${x}</div></div>
+                                <div class="ecw-debug-coord-item"><div class="coord-label">Y</div><div class="coord-val">${y}</div></div>
+                                <div class="ecw-debug-coord-item"><div class="coord-label">Width</div><div class="coord-val">${width}</div></div>
+                                <div class="ecw-debug-coord-item"><div class="coord-label">Height</div><div class="coord-val">${height}</div></div>
                             </div>
                         </div>
                         <div class="ecw-debug-field">
@@ -596,7 +623,6 @@ If the Templates tab is not visible, return:
         `;
         document.body.appendChild(panel);
 
-        // Animate in
         requestAnimationFrame(() => panel.classList.add('open'));
 
         document.getElementById('ecw-debug-close').addEventListener('click', () => {
@@ -604,14 +630,13 @@ If the Templates tab is not visible, return:
             setTimeout(() => panel.remove(), 300);
         });
 
-        // Collapsible sections
         panel.querySelectorAll('.ecw-debug-section-header').forEach(header => {
             header.addEventListener('click', () => {
                 const target  = document.getElementById(header.dataset.target);
                 const chevron = header.querySelector('.ecw-debug-chevron');
                 const isOpen  = target.style.display !== 'none';
-                target.style.display  = isOpen ? 'none' : '';
-                chevron.textContent   = isOpen ? '▶' : '▼';
+                target.style.display = isOpen ? 'none' : '';
+                chevron.textContent  = isOpen ? '▶' : '▼';
             });
         });
     }
@@ -622,29 +647,31 @@ If the Templates tab is not visible, return:
         const apiKey = getApiKey();
         if (!apiKey) return;
 
-        const statusEl = showStatus('Taking screenshot...');
+        const statusEl = showStatus('Reading page...');
 
         try {
-            const [screenshotB64, workflowMd, refImageB64] = await Promise.all([
-                captureScreenshot(),
+            // DOM capture is synchronous — no library load needed
+            const domSnapshot = capturePageContext();
+
+            statusEl.textContent = 'Fetching workflow...';
+            const [workflowMd, refImageB64] = await Promise.all([
                 fetchText(`${GITHUB_RAW}/workflows/${WORKFLOW_ID}/workflow-merge-template.md`),
                 fetchImageAsBase64(`${GITHUB_RAW}/workflows/${WORKFLOW_ID}/screenshots/step-1-templates-tab.png`),
             ]);
 
             statusEl.textContent = 'Asking Claude where to click...';
-
-            const result = await callClaude(apiKey, screenshotB64, workflowMd, refImageB64);
+            const result = await callClaude(apiKey, domSnapshot, workflowMd, refImageB64);
 
             statusEl.remove();
 
             if (!result.found) {
                 alert('ECW Trainer: Could not find the Templates tab.\n\n' + (result.reason || ''));
-                if (debugMode) showDebugPanel(screenshotB64, result);
+                if (debugMode) showDebugPanel(domSnapshot, result);
                 return;
             }
 
             drawOverlay(result);
-            if (debugMode) showDebugPanel(screenshotB64, result);
+            if (debugMode) showDebugPanel(domSnapshot, result);
 
         } catch (err) {
             statusEl.remove();
@@ -654,15 +681,10 @@ If the Templates tab is not visible, return:
     }
 
     // ── Toggle + menu ─────────────────────────────────────────────────────────
-    function closeMenu() {
-        menuEl?.remove();
-        menuEl = null;
-    }
+    function closeMenu() { menuEl?.remove(); menuEl = null; }
 
     function openMenu() {
-        const debugLabel = debugMode
-            ? '🔍 Debug Mode: ON'
-            : '🔍 Debug Mode: OFF';
+        const debugLabel = debugMode ? '🔍 Debug Mode: ON' : '🔍 Debug Mode: OFF';
         const debugClass = debugMode ? 'ecw-debug-on' : 'ecw-muted';
 
         menuEl = document.createElement('div');
@@ -678,19 +700,13 @@ If the Templates tab is not visible, return:
         document.body.appendChild(menuEl);
 
         document.getElementById('ecw-menu-awv').addEventListener('click', startMergeAWVWorkflow);
-
         document.getElementById('ecw-menu-debug').addEventListener('click', () => {
             debugMode = !debugMode;
             GM_setValue('debug_mode', debugMode);
-            closeMenu();
-            openMenu(); // re-render menu with updated label
+            closeMenu(); openMenu();
         });
-
         document.getElementById('ecw-menu-off').addEventListener('click', () => {
-            isActive = false;
-            closeMenu();
-            clearOverlay();
-            updateToggle();
+            isActive = false; closeMenu(); clearOverlay(); updateToggle();
         });
     }
 
@@ -699,26 +715,13 @@ If the Templates tab is not visible, return:
     toggleBtn.id = 'ecw-trainer-toggle';
 
     function updateToggle() {
-        if (isActive) {
-            toggleBtn.textContent = '🟢 ECW Trainer — ON';
-            toggleBtn.className   = 'on';
-        } else {
-            toggleBtn.textContent = '⚫ ECW Trainer — OFF';
-            toggleBtn.className   = 'off';
-        }
+        toggleBtn.textContent = isActive ? '🟢 ECW Trainer — ON' : '⚫ ECW Trainer — OFF';
+        toggleBtn.className   = isActive ? 'on' : 'off';
     }
 
     toggleBtn.addEventListener('click', () => {
-        if (!isActive) {
-            isActive = true;
-            updateToggle();
-            return;
-        }
-        if (menuEl) {
-            closeMenu();
-        } else {
-            openMenu();
-        }
+        if (!isActive) { isActive = true; updateToggle(); return; }
+        menuEl ? closeMenu() : openMenu();
     });
 
     updateToggle();
