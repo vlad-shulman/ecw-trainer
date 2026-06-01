@@ -24,18 +24,29 @@ The provider has a progress note open in ECW. The right chart panel is visible. 
 
 ## Step 1 — Click the Templates Tab
 
+### ⚠️ CRITICAL: Two Elements Named "Templates" Exist
+There are TWO elements labeled "Templates" on the ECW progress note page:
+- ✅ **CORRECT:** The "Templates" tab in the **right chart panel tab row** — a horizontal row of tabs at the TOP of the right panel (alongside Overview, Enc, DRTLA, History, CDSS, OS)
+- ❌ **WRONG:** The "Templates" button in the **bottom toolbar** — a row of buttons at the very bottom of the screen (alongside Send, Print, Fax, Lock, Details, etc.)
+
+**Always target the right chart panel tab. Never target the bottom toolbar button.**
+
 ### What Claude should look for
 - A horizontal tab row in the upper-right chart panel
 - The rightmost tab in that row labeled **"Templates"**
+- Its immediate left neighbor is the tab labeled "OS"
+- The tab is at approximately y:114 in the right chart panel area (NOT near the bottom of the screen)
 - The tab is inactive (Overview is currently the active tab)
 
 ### Target element
 - **Element:** Tab labeled "Templates"
 - **Location:** Last tab in the horizontal tab row in the right chart panel
 - **Neighboring elements:** Immediately to the right of the "OS" tab
+- **Y coordinate range:** Should be between y:100 and y:150 (near the top of the right panel)
+- **NOT the bottom toolbar:** If the only "Templates" element found is near y:750 or higher, that is the wrong element — do not use it
 
 ### Hotspot
-- Pulsing blue ring around the **Templates tab** itself
+- Spotlight cutout around the **Templates tab in the right chart panel tab row only**
 
 ### Instruction box text
 > Click the **Templates** tab in the right chart panel to show favorite templates.
@@ -46,8 +57,8 @@ The provider has a progress note open in ECW. The right chart panel is visible. 
 ### Success state (how Claude validates the click worked)
 The right chart panel content changes from showing Overview content (Global Alerts, Well Visits, Problem List, etc.) to showing:
 - A heading **"My Favorite Templates"** with a filter icon and search box
-- A list of templates including **"\*Cano Annual Wellness Visit MCR"** somewhere in the list (position may vary by provider)
-- Possibly a yellow warning banner at the top of the panel about manually checking copied/merged template data
+- A list of templates including **"\*Cano Annual Wellness Visit MCR"** somewhere in the list
+- Possibly a yellow warning banner at the top of the panel
 
 ---
 
