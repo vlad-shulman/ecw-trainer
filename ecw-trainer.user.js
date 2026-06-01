@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.3.0
+// @version      0.3.1
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -24,9 +24,11 @@
     const GITHUB_RAW  = 'https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main';
     const WORKFLOW_ID = 'merge-awv-template';
 
-    let isActive  = false;
-    let menuEl    = null;
-    let debugMode = GM_getValue('debug_mode', false);
+    let isActive     = false;
+    let menuEl       = null;
+    let debugMode    = GM_getValue('debug_mode', false);
+    let lastSnapshot = null;
+    let lastResult   = null;
 
     // ── API key ───────────────────────────────────────────────────────────────
     function getApiKey() {
@@ -676,14 +678,21 @@ If no "Templates" tab is found in a tab-row context, return:
 
             statusEl.remove();
 
+            lastSnapshot = domSnapshot;
+            lastResult   = result;
+
             if (!result.found) {
                 alert('ECW Trainer: Could not find the Templates tab.\n\n' + (result.reason || ''));
-                if (debugMode) showDebugPanel(domSnapshot, result);
+                if (document.getElementById('ecw-debug-panel')?.classList.contains('open')) {
+                    showDebugPanel(domSnapshot, result);
+                }
                 return;
             }
 
             await drawOverlay(result);
-            if (debugMode) showDebugPanel(domSnapshot, result);
+            if (document.getElementById('ecw-debug-panel')?.classList.contains('open')) {
+                showDebugPanel(domSnapshot, result);
+            }
 
         } catch (err) {
             statusEl.remove();
@@ -715,6 +724,12 @@ If no "Templates" tab is found in a tab-row context, return:
         document.getElementById('ecw-menu-debug').addEventListener('click', () => {
             debugMode = !debugMode;
             GM_setValue('debug_mode', debugMode);
+            if (debugMode) {
+                if (lastSnapshot && lastResult) showDebugPanel(lastSnapshot, lastResult);
+            } else {
+                const panel = document.getElementById('ecw-debug-panel');
+                if (panel) { panel.classList.remove('open'); setTimeout(() => panel.remove(), 300); }
+            }
             closeMenu(); openMenu();
         });
         document.getElementById('ecw-menu-off').addEventListener('click', () => {
