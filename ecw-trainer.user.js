@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.1.6
+// @version      0.1.7
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -9,9 +9,10 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
+// @grant        unsafeWindow
 // @connect      raw.githubusercontent.com
 // @connect      api.anthropic.com
+// @connect      cdnjs.cloudflare.com
 // @updateURL    https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // @downloadURL  https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // ==/UserScript==
@@ -23,7 +24,7 @@
     const WORKFLOW_ID      = 'merge-awv-template';
     const SCREENSHOT_SCALE = 0.75; // reduces image size sent to Claude
 
-    let isActive  = true;
+    let isActive  = false;
     let menuEl    = null;
     let debugMode = GM_getValue('debug_mode', false);
 
@@ -40,9 +41,33 @@
         return key || null;
     }
 
+    // ── html2canvas: load on demand ───────────────────────────────────────────
+    // NOT loaded at startup — only fetched the first time a workflow fires.
+    // This prevents the library from patching browser APIs during ECW's init.
+    let _h2cPromise = null;
+
+    function loadHtml2Canvas() {
+        if (_h2cPromise) return _h2cPromise;
+        _h2cPromise = new Promise((resolve, reject) => {
+            if (typeof unsafeWindow.html2canvas === 'function') {
+                resolve(unsafeWindow.html2canvas);
+                return;
+            }
+            // Inject a script tag into the page — loads html2canvas into the
+            // page context, then accessible via unsafeWindow.html2canvas.
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            script.onload  = () => resolve(unsafeWindow.html2canvas);
+            script.onerror = () => reject(new Error('Failed to load html2canvas'));
+            (document.head || document.documentElement).appendChild(script);
+        });
+        return _h2cPromise;
+    }
+
     // ── Screenshot ────────────────────────────────────────────────────────────
     async function captureScreenshot() {
-        const canvas = await html2canvas(document.documentElement, {
+        const h2c    = await loadHtml2Canvas();
+        const canvas = await h2c(document.documentElement, {
             useCORS:      true,
             allowTaint:   true,
             scale:        SCREENSHOT_SCALE,
