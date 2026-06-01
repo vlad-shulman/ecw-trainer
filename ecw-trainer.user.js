@@ -222,7 +222,11 @@ If no "Templates" tab is found in a tab-row context, return:
                             reject(new Error('Claude API error: ' + body.error.message));
                             return;
                         }
-                        const text = body.content[0].text.trim();
+                        let text = body.content[0].text.trim();
+                        // Claude sometimes wraps JSON in markdown fences despite instructions.
+                        // Strip ```json ... ``` or ``` ... ``` before parsing.
+                        const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                        if (fenceMatch) text = fenceMatch[1].trim();
                         resolve(JSON.parse(text));
                     } catch (e) {
                         reject(new Error('Could not parse Claude response: ' + r.responseText.slice(0, 300)));
