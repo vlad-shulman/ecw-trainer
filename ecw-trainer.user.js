@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.4.0
+// @version      0.5.0
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -10,10 +10,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        unsafeWindow
 // @connect      raw.githubusercontent.com
 // @connect      api.anthropic.com
-// @connect      cdn.jsdelivr.net
 // @updateURL    https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // @downloadURL  https://raw.githubusercontent.com/vlad-shulman/ecw-trainer/main/ecw-trainer.user.js
 // ==/UserScript==
@@ -324,63 +322,39 @@ If no "Templates" tab is found in a tab-row context, return:
         .ecw-debug-el-table tr:hover td { background: rgba(255,255,255,0.04); }
         .ecw-debug-el-text { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        /* ── driver.js popover — ECW Trainer blue theme ── */
-        .driver-popover {
-            background:    #1a56db !important;
-            color:         #ffffff !important;
-            border-radius: 12px   !important;
-            font-family:   Arial, sans-serif !important;
-            min-width:     280px  !important;
-            max-width:     420px  !important;
-            box-shadow:    0 6px 24px rgba(0,0,0,0.35) !important;
+        /* ── Custom hotspot tooltip ── */
+        #ecw-hotspot-tooltip {
+            position: fixed; z-index: 999995;
+            background: #1a56db; color: #ffffff; border-radius: 12px;
+            padding: 16px 18px; font-family: Arial, sans-serif; font-size: 13px;
+            min-width: 280px; max-width: 380px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+            pointer-events: none; overflow: visible;
         }
-        .driver-popover-title {
-            color:       rgba(255,255,255,0.75) !important;
-            font-size:   12px !important;
-            font-weight: normal !important;
-            margin-bottom: 6px !important;
+        .ecw-hs-step {
+            color: rgba(255,255,255,0.7); font-size: 11px; font-weight: bold;
+            text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
         }
-        .driver-popover-description {
-            color:       #ffffff !important;
-            font-size:   15px   !important;
-            line-height: 1.55   !important;
+        .ecw-hs-body  { font-size: 15px; line-height: 1.55; margin-bottom: 16px; }
+        .ecw-hs-body strong { font-weight: bold; }
+        .ecw-hs-footer { display: flex; gap: 8px; justify-content: flex-end; }
+        #ecw-hs-dismiss {
+            pointer-events: auto; cursor: pointer;
+            background: transparent; color: rgba(255,255,255,0.85);
+            border: 1px solid rgba(255,255,255,0.4); border-radius: 6px;
+            font-family: Arial, sans-serif; font-size: 13px; padding: 6px 16px;
         }
-        .driver-popover-description strong { font-weight: bold; }
-        .driver-popover-footer { margin-top: 16px !important; gap: 8px !important; }
-        .driver-popover-next-btn {
-            background:    #ffffff !important;
-            color:         #1a56db !important;
-            border:        none    !important;
-            border-radius: 6px    !important;
-            font-size:     13px   !important;
-            font-weight:   bold   !important;
-            padding:       6px 16px !important;
+        #ecw-hs-dismiss:hover { background: rgba(255,255,255,0.12); }
+        #ecw-hs-next {
+            pointer-events: auto; cursor: pointer;
+            background: #ffffff; color: #1a56db; border: none; border-radius: 6px;
+            font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; padding: 6px 16px;
         }
-        .driver-popover-prev-btn {
-            background:    transparent !important;
-            color:         rgba(255,255,255,0.8) !important;
-            border:        1px solid rgba(255,255,255,0.4) !important;
-            border-radius: 6px !important;
-            font-size:     13px !important;
-            padding:       6px 16px !important;
-        }
-        .driver-popover-next-btn:hover { background: #e0e7ff !important; }
-        .driver-popover-prev-btn:hover { background: rgba(255,255,255,0.1) !important; }
-        .driver-popover-arrow-side-left   .driver-popover-arrow { border-right-color:  #1a56db !important; }
-        .driver-popover-arrow-side-right  .driver-popover-arrow { border-left-color:   #1a56db !important; }
-        .driver-popover-arrow-side-top    .driver-popover-arrow { border-bottom-color: #1a56db !important; }
-        .driver-popover-arrow-side-bottom .driver-popover-arrow { border-top-color:    #1a56db !important; }
-
-        /* driver.js — pass all clicks through to ECW; only popover buttons are interactive */
-        .driver-overlay                  { pointer-events: none !important; }
-        .driver-popover                  { pointer-events: none !important; overflow: visible !important; }
-        .driver-popover-next-btn,
-        .driver-popover-prev-btn,
-        .driver-popover-close-btn        { pointer-events: auto !important; cursor: pointer !important; }
+        #ecw-hs-next:hover { background: #e0e7ff; }
     `);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // renderHotspot — self-contained UI layer (driver.js implementation).
+    // renderHotspot — self-contained UI layer (custom SVG overlay).
     // To swap the overlay library, replace only this block — nothing else changes.
     //
     // Public API:
@@ -388,55 +362,9 @@ If no "Templates" tab is found in a tab-row context, return:
     //   clearRenderHotspot()
     // ═══════════════════════════════════════════════════════════════════════════
 
-    let _driverLoadPromise = null;
-    let _driverInstance    = null;  // { driverObj, proxyEl }
+    let _hotspotInstance = null;  // { overlayEl, tooltipEl }
 
-    // Lazy-loads driver.js via GM_xmlhttpRequest (bypasses src-based CSP) then
-    // injects it as an inline script. Cached — only fetches once per page load.
-    function ensureDriver() {
-        if (unsafeWindow.driver?.js?.driver) return Promise.resolve();
-        if (_driverLoadPromise) return _driverLoadPromise;
-
-        _driverLoadPromise = (async () => {
-            function gmGet(url) {
-                return new Promise((resolve, reject) => GM_xmlhttpRequest({
-                    method: 'GET', url,
-                    onload:  r => resolve(r.responseText),
-                    onerror: () => reject(new Error('Fetch failed: ' + url)),
-                }));
-            }
-
-            // Fetch JS and CSS in parallel
-            const [jsCode, cssCode] = await Promise.all([
-                gmGet('https://cdn.jsdelivr.net/npm/driver.js@1/dist/driver.js.iife.js'),
-                gmGet('https://cdn.jsdelivr.net/npm/driver.js@1/dist/driver.css'),
-            ]);
-
-            // CSS: style elements are not subject to script-src CSP restrictions
-            const styleEl = document.createElement('style');
-            styleEl.textContent = cssCode;
-            document.head.appendChild(styleEl);
-
-            // JS: inject as inline script (bypasses src-based CSP;
-            // fails only if ECW also sets script-src without 'unsafe-inline')
-            const scriptEl = document.createElement('script');
-            scriptEl.textContent = jsCode;
-            document.head.appendChild(scriptEl);
-            scriptEl.remove();
-
-            if (!unsafeWindow.driver?.js?.driver) {
-                throw new Error(
-                    'driver.js failed to initialize — ECW\'s CSP may block inline scripts.\n' +
-                    'Fix: add this line to the script header:\n' +
-                    '@require https://cdn.jsdelivr.net/npm/driver.js@1/dist/driver.js.iife.js'
-                );
-            }
-        })();
-
-        return _driverLoadPromise;
-    }
-
-    // Returns an element's position in main-document coordinates.
+    // Returns an element's position in main-document viewport coordinates.
     // Handles elements that live inside same-origin iframes.
     function getAbsoluteRect(element) {
         const rect = element.getBoundingClientRect();
@@ -465,78 +393,159 @@ If no "Templates" tab is found in a tab-row context, return:
         return el;
     }
 
-    async function renderHotspot(element, instructionText, stepNum, totalSteps, onNext, onDismiss) {
+    function renderHotspot(element, instructionText, stepNum, totalSteps, onNext, onDismiss) {
         clearRenderHotspot();
-        await ensureDriver();
 
-        const { driver } = unsafeWindow.driver.js;
         const html = instructionText.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        const r    = getAbsoluteRect(element);
+        const PAD  = 6;   // px padding around the spotlight rect
+        const GAP  = 14;  // px gap between spotlight edge and tooltip
+        const vw   = window.innerWidth;
+        const vh   = window.innerHeight;
 
-        // driver.js renders in the main document and can't directly spotlight
-        // elements inside iframes. If the target is in an iframe, create a
-        // transparent proxy div in the main document at the correct absolute
-        // position so driver.js spotlights the right area.
-        let proxyEl  = null;
-        let targetEl = element;
-        if (element.ownerDocument !== document) {
-            const r = getAbsoluteRect(element);
-            proxyEl = document.createElement('div');
-            proxyEl.id = 'ecw-driver-proxy';
-            Object.assign(proxyEl.style, {
-                position:       'fixed',
-                left:           r.left   + 'px',
-                top:            r.top    + 'px',
-                width:          r.width  + 'px',
-                height:         r.height + 'px',
-                pointerEvents:  'none',
-                zIndex:         '1',
-                background:     'transparent',
-            });
-            document.body.appendChild(proxyEl);
-            targetEl = proxyEl;
-        }
+        // Pick the viewport side with the most space for the tooltip
+        const side = [
+            ['left',   r.left],
+            ['right',  vw - r.right],
+            ['top',    r.top],
+            ['bottom', vh - r.bottom],
+        ].reduce((a, b) => a[1] > b[1] ? a : b)[0];
 
-        function cleanup() {
-            try { _driverInstance?.driverObj?.destroy(); } catch (_) {}
-            proxyEl?.remove();
-            _driverInstance = null;
-        }
+        // ── SVG dimmed backdrop with evenodd spotlight cutout ─────────────────
+        // pointer-events: none means the entire overlay — including the dim —
+        // passes all mouse events through to ECW underneath.
+        const sx = Math.round(r.left   - PAD);
+        const sy = Math.round(r.top    - PAD);
+        const sw = Math.round(r.width  + PAD * 2);
+        const sh = Math.round(r.height + PAD * 2);
 
-        const { top, height } = targetEl.getBoundingClientRect();
-        const side = (top + height / 2) > window.innerHeight * 0.6 ? 'top' : 'bottom';
-
-        const driverObj = driver({
-            overlayColor: 'rgba(0, 0, 0, 0.55)',
-            smoothScroll: false,
-            allowClose:   false,
-            steps: [{
-                element: targetEl,
-                popover: {
-                    title:       `Step ${stepNum} / ${totalSteps}`,
-                    description: html,
-                    side,
-                    align:       'start',
-                    showButtons: ['next', 'previous'],
-                    nextBtnText: 'Next →',
-                    prevBtnText: 'Dismiss',
-                    doneBtnText: 'Next →',
-                    onNextClick:  () => { cleanup(); onNext?.(); },
-                    onPrevClick:  () => { cleanup(); onDismiss?.(); },
-                },
-            }],
+        const svgNS     = 'http://www.w3.org/2000/svg';
+        const overlayEl = document.createElementNS(svgNS, 'svg');
+        Object.assign(overlayEl.style, {
+            position: 'fixed', top: '0', left: '0',
+            width: '100%', height: '100%',
+            zIndex: '999990', pointerEvents: 'none', overflow: 'visible',
         });
 
-        _driverInstance = { driverObj, proxyEl };
-        driverObj.drive();
+        const pathEl = document.createElementNS(svgNS, 'path');
+        // Outer rect (full viewport) + inner rect (spotlight) with fill-rule evenodd
+        // → inner area has even crossing count → transparent hole.
+        pathEl.setAttribute('d',
+            `M0,0 H${vw} V${vh} H0 Z ` +
+            `M${sx},${sy} H${sx + sw} V${sy + sh} H${sx} Z`
+        );
+        pathEl.setAttribute('fill', 'rgba(0,0,0,0.55)');
+        pathEl.setAttribute('fill-rule', 'evenodd');
+        overlayEl.appendChild(pathEl);
+
+        // ── Tooltip ───────────────────────────────────────────────────────────
+        const tooltipEl = document.createElement('div');
+        tooltipEl.id = 'ecw-hotspot-tooltip';
+        tooltipEl.innerHTML =
+            `<div class="ecw-hs-step">Step ${stepNum} / ${totalSteps}</div>` +
+            `<div class="ecw-hs-body">${html}</div>` +
+            `<div class="ecw-hs-footer">` +
+                `<button id="ecw-hs-dismiss">Dismiss</button>` +
+                `<button id="ecw-hs-next">Next →</button>` +
+            `</div>`;
+
+        document.body.appendChild(overlayEl);
+        document.body.appendChild(tooltipEl);
+
+        // Position tooltip + build arrow after first layout pass
+        requestAnimationFrame(() => {
+            const tw = tooltipEl.offsetWidth  || 300;
+            const th = tooltipEl.offsetHeight || 120;
+            let left, top;
+
+            if (side === 'left') {
+                left = r.left - PAD - GAP - tw;
+                top  = r.top + r.height / 2 - th / 2;
+            } else if (side === 'right') {
+                left = r.right + PAD + GAP;
+                top  = r.top + r.height / 2 - th / 2;
+            } else if (side === 'bottom') {
+                left = r.left + r.width / 2 - tw / 2;
+                top  = r.bottom + PAD + GAP;
+            } else {
+                left = r.left + r.width / 2 - tw / 2;
+                top  = r.top - PAD - GAP - th;
+            }
+
+            // Clamp to viewport with margin
+            left = Math.max(8, Math.min(left, vw - tw - 8));
+            top  = Math.max(8, Math.min(top,  vh - th - 8));
+
+            tooltipEl.style.left = left + 'px';
+            tooltipEl.style.top  = top  + 'px';
+
+            // Arrow triangle pointing toward the spotlight element
+            const arrowEl   = document.createElement('div');
+            const arrowSize = 10;
+            Object.assign(arrowEl.style, {
+                position: 'absolute', width: '0', height: '0',
+                border: arrowSize + 'px solid transparent',
+                pointerEvents: 'none',
+            });
+
+            if (side === 'left' || side === 'right') {
+                const cy       = r.top + r.height / 2;
+                const arrowTop = Math.max(arrowSize + 4,
+                    Math.min(Math.round(cy - top), th - arrowSize - 4));
+                arrowEl.style.top       = arrowTop + 'px';
+                arrowEl.style.transform = 'translateY(-50%)';
+                if (side === 'left') {
+                    // Tooltip is left of element → arrow on right edge, points right ▶
+                    arrowEl.style.right            = (-arrowSize * 2) + 'px';
+                    arrowEl.style.borderLeftColor  = '#1a56db';
+                    arrowEl.style.borderRightWidth = '0';
+                } else {
+                    // Tooltip is right of element → arrow on left edge, points left ◀
+                    arrowEl.style.left              = (-arrowSize * 2) + 'px';
+                    arrowEl.style.borderRightColor  = '#1a56db';
+                    arrowEl.style.borderLeftWidth   = '0';
+                }
+            } else {
+                const cx        = r.left + r.width / 2;
+                const arrowLeft = Math.max(arrowSize + 4,
+                    Math.min(Math.round(cx - left), tw - arrowSize - 4));
+                arrowEl.style.left      = arrowLeft + 'px';
+                arrowEl.style.transform = 'translateX(-50%)';
+                if (side === 'bottom') {
+                    // Tooltip is below element → arrow on top edge, points up ▲
+                    arrowEl.style.top              = (-arrowSize * 2) + 'px';
+                    arrowEl.style.borderBottomColor = '#1a56db';
+                    arrowEl.style.borderTopWidth   = '0';
+                } else {
+                    // Tooltip is above element → arrow on bottom edge, points down ▼
+                    arrowEl.style.bottom            = (-arrowSize * 2) + 'px';
+                    arrowEl.style.borderTopColor    = '#1a56db';
+                    arrowEl.style.borderBottomWidth = '0';
+                }
+            }
+            tooltipEl.appendChild(arrowEl);
+        });
+
+        // ── Button handlers ───────────────────────────────────────────────────
+        function cleanup() {
+            overlayEl.remove();
+            tooltipEl.remove();
+            _hotspotInstance = null;
+        }
+
+        tooltipEl.querySelector('#ecw-hs-dismiss').addEventListener('click', () => { cleanup(); onDismiss?.(); });
+        tooltipEl.querySelector('#ecw-hs-next').addEventListener('click',    () => { cleanup(); onNext?.();    });
+
+        _hotspotInstance = { overlayEl, tooltipEl };
     }
 
     function clearRenderHotspot() {
-        if (_driverInstance) {
-            try { _driverInstance.driverObj?.destroy(); } catch (_) {}
-            _driverInstance.proxyEl?.remove();
-            _driverInstance = null;
+        if (_hotspotInstance) {
+            _hotspotInstance.overlayEl?.remove();
+            _hotspotInstance.tooltipEl?.remove();
+            _hotspotInstance = null;
         }
-        document.getElementById('ecw-driver-proxy')?.remove();
+        document.getElementById('ecw-hotspot-tooltip')?.remove();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
