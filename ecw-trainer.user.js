@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.3.1
+// @version      0.4.0
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
@@ -216,17 +216,29 @@ If no "Templates" tab is found in a tab-row context, return:
 
     // ── Styles ────────────────────────────────────────────────────────────────
     GM_addStyle(`
-        /* ── Toggle button ── */
+        /* ── Toggle switch ── */
         #ecw-trainer-toggle {
             position: fixed; bottom: 20px; right: 20px; z-index: 999999;
-            font-family: Arial, sans-serif; font-size: 12px; padding: 6px 14px;
-            border-radius: 999px; border: none; cursor: pointer;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2); opacity: 0.75;
-            transition: opacity 0.2s, background 0.2s; pointer-events: auto; white-space: nowrap;
+            display: flex; align-items: center; gap: 10px;
+            background: #ffffff; border-radius: 999px; padding: 6px 8px 6px 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2); cursor: pointer;
+            font-family: Arial, sans-serif; font-size: 12px; color: #374151;
+            user-select: none; pointer-events: auto; transition: box-shadow 0.15s;
         }
-        #ecw-trainer-toggle:hover { opacity: 1; }
-        #ecw-trainer-toggle.on    { background: #1a56db; color: #ffffff; }
-        #ecw-trainer-toggle.off   { background: #6b7280; color: #e5e7eb; }
+        #ecw-trainer-toggle:hover { box-shadow: 0 3px 12px rgba(0,0,0,0.28); }
+        #ecw-trainer-switch {
+            width: 36px; height: 20px; border-radius: 10px;
+            background: #d1d5db; position: relative; flex-shrink: 0;
+            transition: background 0.2s;
+        }
+        #ecw-trainer-switch.on { background: #1a56db; }
+        #ecw-trainer-thumb {
+            position: absolute; top: 2px; left: 2px;
+            width: 16px; height: 16px; border-radius: 50%;
+            background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            transition: transform 0.2s;
+        }
+        #ecw-trainer-switch.on #ecw-trainer-thumb { transform: translateX(16px); }
 
         /* ── Workflow menu ── */
         #ecw-workflow-menu {
@@ -358,6 +370,13 @@ If no "Templates" tab is found in a tab-row context, return:
         .driver-popover-arrow-side-right  .driver-popover-arrow { border-left-color:   #1a56db !important; }
         .driver-popover-arrow-side-top    .driver-popover-arrow { border-bottom-color: #1a56db !important; }
         .driver-popover-arrow-side-bottom .driver-popover-arrow { border-top-color:    #1a56db !important; }
+
+        /* driver.js — pass all clicks through to ECW; only popover buttons are interactive */
+        .driver-overlay                  { pointer-events: none !important; }
+        .driver-popover                  { pointer-events: none !important; overflow: visible !important; }
+        .driver-popover-next-btn,
+        .driver-popover-prev-btn,
+        .driver-popover-close-btn        { pointer-events: auto !important; cursor: pointer !important; }
     `);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -483,6 +502,9 @@ If no "Templates" tab is found in a tab-row context, return:
             _driverInstance = null;
         }
 
+        const { top, height } = targetEl.getBoundingClientRect();
+        const side = (top + height / 2) > window.innerHeight * 0.6 ? 'top' : 'bottom';
+
         const driverObj = driver({
             overlayColor: 'rgba(0, 0, 0, 0.55)',
             smoothScroll: false,
@@ -492,7 +514,7 @@ If no "Templates" tab is found in a tab-row context, return:
                 popover: {
                     title:       `Step ${stepNum} / ${totalSteps}`,
                     description: html,
-                    side:        'bottom',
+                    side,
                     align:       'start',
                     showButtons: ['next', 'previous'],
                     nextBtnText: 'Next →',
@@ -738,12 +760,12 @@ If no "Templates" tab is found in a tab-row context, return:
     }
 
     // ── Toggle button ─────────────────────────────────────────────────────────
-    const toggleBtn = document.createElement('button');
+    const toggleBtn = document.createElement('div');
     toggleBtn.id = 'ecw-trainer-toggle';
+    toggleBtn.innerHTML = '<span>ECW Trainer</span><div id="ecw-trainer-switch"><div id="ecw-trainer-thumb"></div></div>';
 
     function updateToggle() {
-        toggleBtn.textContent = isActive ? '🟢 ECW Trainer — ON' : '⚫ ECW Trainer — OFF';
-        toggleBtn.className   = isActive ? 'on' : 'off';
+        toggleBtn.querySelector('#ecw-trainer-switch')?.classList.toggle('on', isActive);
     }
 
     toggleBtn.addEventListener('click', () => {
