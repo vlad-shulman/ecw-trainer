@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         ECW On-Demand Trainer
 // @namespace    https://github.com/vlad-shulman/ecw-trainer
-// @version      0.1.7
+// @version      0.1.8
 // @description  On-demand training overlay for eClinicalWorks
 // @author       Vlad
 // @match        *://flcahatrnapp.ecwcloud.com/*
+// @run-at       document-idle
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
